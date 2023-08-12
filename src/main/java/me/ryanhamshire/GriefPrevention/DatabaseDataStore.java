@@ -18,13 +18,17 @@
 
 package me.ryanhamshire.GriefPrevention;
 
+import com.google.common.io.Files;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 
+import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -36,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
@@ -47,7 +52,7 @@ public class DatabaseDataStore extends DataStore
     private static final String SQL_UPDATE_NAME =
             "UPDATE griefprevention_playerdata SET name = ? WHERE name = ?";
     private static final String SQL_INSERT_CLAIM =
-            "INSERT INTO griefprevention_claimdata (id, owner, lessercorner, greatercorner, builders, containers, accessors, managers, inheritnothing, parentid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            "INSERT INTO griefprevention_claimdata (id, owner, server, lessercorner, greatercorner, builders, containers, accessors, managers, inheritnothing, parentid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String SQL_DELETE_CLAIM =
             "DELETE FROM griefprevention_claimdata WHERE id = ?";
     private static final String SQL_SELECT_PLAYER_DATA =
@@ -74,12 +79,18 @@ public class DatabaseDataStore extends DataStore
     private final String databaseUrl;
     private final String userName;
     private final String password;
+    private final boolean syncPlayerData;
 
-    DatabaseDataStore(String url, String userName, String password) throws Exception
+    DatabaseDataStore(String url, String userName, String password, boolean syncPlayerData) throws Exception
     {
         this.databaseUrl = url;
         this.userName = userName;
         this.password = password;
+        this.syncPlayerData = syncPlayerData;
+        if (!this.syncPlayerData)
+        {
+            GriefPrevention.AddLogEntry("[MouBieCat]: 已經關閉資料庫同步功能，現在該分流已不同步玩家資料。");
+        }
 
         this.initialize();
     }
@@ -488,26 +499,75 @@ public class DatabaseDataStore extends DataStore
     @Override
     PlayerData getPlayerDataFromStorage(UUID playerID)
     {
-        PlayerData playerData = new PlayerData();
+        final PlayerData playerData = new PlayerData();
         playerData.playerID = playerID;
 
-        try (PreparedStatement selectStmnt = this.databaseConnection.prepareStatement(SQL_SELECT_PLAYER_DATA))
+        if (this.syncPlayerData)
         {
-            selectStmnt.setString(1, playerID.toString());
-            ResultSet results = selectStmnt.executeQuery();
-
-            //if data for this player exists, use it
-            if (results.next())
+            try (final PreparedStatement preparedStatement = this.databaseConnection.prepareStatement(SQL_SELECT_PLAYER_DATA))
             {
-                playerData.setAccruedClaimBlocks(results.getInt("accruedblocks"));
-                playerData.setBonusClaimBlocks(results.getInt("bonusblocks"));
+                preparedStatement.setString(1, playerID.toString());
+                final ResultSet results = preparedStatement.executeQuery();
+                //if data for this player exists, use it
+                if (results.next())
+                {
+                    playerData.setAccruedClaimBlocks(results.getInt("accruedblocks"));
+                    playerData.setBonusClaimBlocks(results.getInt("bonusblocks"));
+                }
+            }
+            catch (final SQLException e)
+            {
+                final StringWriter errors = new StringWriter();
+                e.printStackTrace(new PrintWriter(errors));
+                GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
             }
         }
-        catch (SQLException e)
+        else
         {
-            StringWriter errors = new StringWriter();
-            e.printStackTrace(new PrintWriter(errors));
-            GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
+            final File playerFile = new File(playerDataFolderPath + File.separator + playerID.toString());
+
+            if (playerFile.exists())
+            {
+                boolean needRetry;
+                int retriesRemaining = 5;
+                Exception latestException = null;
+                do
+                {
+                    try
+                    {
+                        needRetry = false;
+                        final List<String> lines = Files.readLines(playerFile, Charset.forName("UTF-8"));
+                        final Iterator<String> iterator = lines.iterator();
+                        iterator.next();
+                        final String accruedBlocksString = iterator.next();
+                        playerData.setAccruedClaimBlocks(Integer.parseInt(accruedBlocksString));
+                        final String bonusBlocksString = iterator.next();
+                        playerData.setBonusClaimBlocks(Integer.parseInt(bonusBlocksString));
+                    }
+                    catch (Exception e)
+                    {
+                        latestException = e;
+                        needRetry = true;
+                        retriesRemaining--;
+                    }
+
+                    try
+                    {
+                        if (needRetry) Thread.sleep(5);
+                    }
+                    catch (final InterruptedException ignored) {}
+
+                } while (needRetry && retriesRemaining >= 0);
+
+                //if last attempt failed, log information about the problem
+                if (needRetry)
+                {
+                    final StringWriter errors = new StringWriter();
+                    latestException.printStackTrace(new PrintWriter(errors));
+                    GriefPrevention.AddLogEntry("Failed to load PlayerData for " + playerID + ". This usually occurs when your server runs out of storage space, causing any file saves to corrupt. Fix or delete the file in GriefPrevetionData/PlayerData/" + playerID, CustomLogEntryTypes.Debug, false);
+                    GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
+                }
+            }
         }
 
         return playerData;
@@ -520,32 +580,52 @@ public class DatabaseDataStore extends DataStore
         //never save data for the "administrative" account.  an empty string for player name indicates administrative account
         if (playerID == null) return;
 
-        this.savePlayerData(playerID.toString(), playerData);
-    }
-
-    private void savePlayerData(String playerID, PlayerData playerData)
-    {
-        try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_PLAYER_DATA);
-             PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
+        if (this.syncPlayerData)
         {
-            OfflinePlayer player = Bukkit.getOfflinePlayer(UUID.fromString(playerID));
+            try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_PLAYER_DATA);
+                 PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
+            {
+                OfflinePlayer player = Bukkit.getOfflinePlayer(UUID.fromString(playerID.toString()));
 
-            SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            String dateString = sqlFormat.format(new Date(player.getLastPlayed()));
-            deleteStmnt.setString(1, playerID);
-            deleteStmnt.executeUpdate();
+                SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                String dateString = sqlFormat.format(new Date(player.getLastPlayed()));
+                deleteStmnt.setString(1, playerID.toString());
+                deleteStmnt.executeUpdate();
 
-            insertStmnt.setString(1, playerID);
-            insertStmnt.setString(2, dateString);
-            insertStmnt.setInt(3, playerData.getAccruedClaimBlocks());
-            insertStmnt.setInt(4, playerData.getBonusClaimBlocks());
-            insertStmnt.executeUpdate();
+                insertStmnt.setString(1, playerID.toString());
+                insertStmnt.setString(2, dateString);
+                insertStmnt.setInt(3, playerData.getAccruedClaimBlocks());
+                insertStmnt.setInt(4, playerData.getBonusClaimBlocks());
+                insertStmnt.executeUpdate();
+            }
+            catch (SQLException e)
+            {
+                StringWriter errors = new StringWriter();
+                e.printStackTrace(new PrintWriter(errors));
+                GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
+            }
         }
-        catch (SQLException e)
+        else
         {
-            StringWriter errors = new StringWriter();
-            e.printStackTrace(new PrintWriter(errors));
-            GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
+            final StringBuilder fileContent = new StringBuilder();
+            try
+            {
+                fileContent.append("\n");
+                fileContent.append(playerData.getAccruedClaimBlocks());
+                fileContent.append("\n");
+                fileContent.append(String.valueOf(playerData.getBonusClaimBlocks()));
+                fileContent.append("\n");
+                fileContent.append("\n");
+                File playerDataFile = new File(playerDataFolderPath + File.separator + playerID.toString());
+                Files.write(fileContent.toString().getBytes(StandardCharsets.UTF_8), playerDataFile);
+            }
+
+            //if any problem, log it
+            catch (final Exception e)
+            {
+                GriefPrevention.AddLogEntry("GriefPrevention: Unexpected exception saving data for player \"" + playerID.toString() + "\": " + e.getMessage());
+                e.printStackTrace();
+            }
         }
     }
 
@@ -612,7 +692,7 @@ public class DatabaseDataStore extends DataStore
                     this.databaseConnection.close();
                 }
             }
-            catch (SQLException e) {}
+            catch (SQLException ignored) {}
             ;
         }
 

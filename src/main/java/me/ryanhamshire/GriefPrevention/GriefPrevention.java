@@ -100,6 +100,9 @@ public class GriefPrevention extends JavaPlugin
     PlayerEventHandler playerEventHandler;
     //configuration variables, loaded/saved from a config.yml
 
+    // Server name
+    public String config_server_name = "Unknown Server";
+
     //claim mode for each world
     public ConcurrentHashMap<World, ClaimsMode> config_claims_worldModes;
     private boolean config_creativeWorldsExist;                     //note on whether there are any creative mode worlds, to save cpu cycles on a common hash lookup
@@ -246,7 +249,9 @@ public class GriefPrevention extends JavaPlugin
     private String databaseUrl;
     private String databaseUserName;
     private String databasePassword;
+    private boolean databaseSyncPlayerData;
 
+    private final ClaimCheckTask claimCheckTask = new ClaimCheckTask(this);;
 
     //how far away to search from a tree trunk for its branch blocks
     public static final int TREE_RADIUS = 5;
@@ -291,7 +296,7 @@ public class GriefPrevention extends JavaPlugin
         {
             try
             {
-                DatabaseDataStore databaseStore = new DatabaseDataStore(this.databaseUrl, this.databaseUserName, this.databasePassword);
+                DatabaseDataStore databaseStore = new DatabaseDataStore(this.databaseUrl, this.databaseUserName, this.databasePassword, this.databaseSyncPlayerData);
 
                 if (FlatFileDataStore.hasData())
                 {
@@ -386,6 +391,9 @@ public class GriefPrevention extends JavaPlugin
         //vault-based economy integration
         economyHandler = new EconomyHandler(this);
         pluginManager.registerEvents(economyHandler, this);
+
+        // Claim check task start
+        this.claimCheckTask.start();
 
         //cache offline players
         OfflinePlayer[] offlinePlayers = this.getServer().getOfflinePlayers();
@@ -532,6 +540,9 @@ public class GriefPrevention extends JavaPlugin
             boolean pvpWorld = config.getBoolean("GriefPrevention.PvP.RulesEnabledInWorld." + world.getName(), world.getPVP());
             this.config_pvp_specifiedWorlds.put(world, pvpWorld);
         }
+
+        // Server name
+        this.config_server_name = config.getString("MouBieCat.ServerName", "Unknown Server");
 
         //sea level
         this.config_seaLevelOverride = new HashMap<>();
@@ -776,6 +787,7 @@ public class GriefPrevention extends JavaPlugin
         this.databaseUrl = config.getString("GriefPrevention.Database.URL", "");
         this.databaseUserName = config.getString("GriefPrevention.Database.UserName", "");
         this.databasePassword = config.getString("GriefPrevention.Database.Password", "");
+        this.databaseSyncPlayerData = config.getBoolean("GriefPrevention.Database.MouBieCat.SyncPlayerData", true);
 
         this.config_advanced_fixNegativeClaimblockAmounts = config.getBoolean("GriefPrevention.Advanced.fixNegativeClaimblockAmounts", true);
         this.config_advanced_claim_expiration_check_rate = config.getInt("GriefPrevention.Advanced.ClaimExpirationCheckRate", 60);
@@ -797,7 +809,7 @@ public class GriefPrevention extends JavaPlugin
                     this.config_claims_worldModes.get(world).name());
         }
 
-
+        outConfig.set("MouBieCat.ServerName", this.config_server_name);
         outConfig.set("GriefPrevention.Claims.PreventGlobalMonsterEggs", this.config_claims_preventGlobalMonsterEggs);
         outConfig.set("GriefPrevention.Claims.PreventTheft", this.config_claims_preventTheft);
         outConfig.set("GriefPrevention.Claims.ProtectCreatures", this.config_claims_protectCreatures);
@@ -915,6 +927,7 @@ public class GriefPrevention extends JavaPlugin
         outConfig.set("GriefPrevention.Database.URL", this.databaseUrl);
         outConfig.set("GriefPrevention.Database.UserName", this.databaseUserName);
         outConfig.set("GriefPrevention.Database.Password", this.databasePassword);
+        outConfig.set("GriefPrevention.Database.MouBieCat.SyncPlayerData", this.databaseSyncPlayerData);
 
         outConfig.set("GriefPrevention.UseBanCommand", this.config_ban_useCommand);
         outConfig.set("GriefPrevention.BanCommandPattern", this.config_ban_commandFormat);
@@ -3266,6 +3279,9 @@ public class GriefPrevention extends JavaPlugin
 
         //dump any remaining unwritten log entries
         this.customLogger.WriteEntries();
+
+        // Claim check task cancel
+        this.claimCheckTask.cancel();
 
         AddLogEntry("GriefPrevention disabled.");
     }

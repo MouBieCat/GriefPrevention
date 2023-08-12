@@ -937,7 +937,18 @@ class PlayerEventHandler implements Listener
 
         if (playerData.wasKicked)
         {
-            isBanned = player.isBanned();
+            // 我不知道為什麼它會異常，在玩家離開或是伺服器關閉時。
+            // 也許跟我自己裝的插件衝突。推測也許是 MysqlPlayerDataBridge 的關係。
+            try
+            {
+                // 這裡會拋出異常，但是我們不會在意。
+                isBanned = player.isBanned();
+            } catch (final Exception e)
+            {
+                // 這裡會拋出異常，但是我們不會在意。
+                // 直接略過，返回 false
+                isBanned = false;
+            }
         }
         else
         {
@@ -1759,7 +1770,7 @@ class PlayerEventHandler implements Listener
                                 clickedBlockType == Material.ROOTED_DIRT ||
                                 clickedBlockType == Material.STONECUTTER ||
                                 clickedBlockType == Material.SWEET_BERRY_BUSH
-                        )))
+                )))
         {
             if (playerData == null) playerData = this.dataStore.getPlayerData(player.getUniqueId());
 
@@ -1808,13 +1819,13 @@ class PlayerEventHandler implements Listener
 
                 (instance.config_claims_lockWoodenDoors && Tag.WOODEN_DOORS.isTagged(clickedBlockType) ||
 
-                instance.config_claims_preventButtonsSwitches && Tag.BEDS.isTagged(clickedBlockType) ||
+                        instance.config_claims_preventButtonsSwitches && Tag.BEDS.isTagged(clickedBlockType) ||
 
-                instance.config_claims_lockTrapDoors && Tag.WOODEN_TRAPDOORS.isTagged(clickedBlockType) ||
+                        instance.config_claims_lockTrapDoors && Tag.WOODEN_TRAPDOORS.isTagged(clickedBlockType) ||
 
-                instance.config_claims_lecternReadingRequiresAccessTrust && clickedBlockType == Material.LECTERN ||
+                        instance.config_claims_lecternReadingRequiresAccessTrust && clickedBlockType == Material.LECTERN ||
 
-                instance.config_claims_lockFenceGates && Tag.FENCE_GATES.isTagged(clickedBlockType)))
+                        instance.config_claims_lockFenceGates && Tag.FENCE_GATES.isTagged(clickedBlockType)))
         {
             if (playerData == null) playerData = this.dataStore.getPlayerData(player.getUniqueId());
             Claim claim = this.dataStore.getClaimAt(clickedBlock.getLocation(), false, playerData.lastClaim);
