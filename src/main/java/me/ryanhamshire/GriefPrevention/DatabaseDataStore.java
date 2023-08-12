@@ -234,7 +234,7 @@ public class DatabaseDataStore extends DataStore
                         }
                     }
                     //otherwise leave it as-is. no harm done - it won't be requested by name, and this update only happens once.
-                    catch (Exception ex) { }
+                    catch (Exception ex) {}
                 }
 
                 //refresh data connection in case data migration took a long time
@@ -462,14 +462,16 @@ public class DatabaseDataStore extends DataStore
 
             insertStmt.setLong(1, claim.id);
             insertStmt.setString(2, owner);
-            insertStmt.setString(3, lesserCornerString);
-            insertStmt.setString(4, greaterCornerString);
-            insertStmt.setString(5, buildersString);
-            insertStmt.setString(6, containersString);
-            insertStmt.setString(7, accessorsString);
-            insertStmt.setString(8, managersString);
-            insertStmt.setBoolean(9, inheritNothing);
-            insertStmt.setLong(10, parentId);
+            // TODO: 13/08/2023 - MouBieCat
+            insertStmt.setString(3, GriefPrevention.instance.config_server_name);
+            insertStmt.setString(4, lesserCornerString);
+            insertStmt.setString(5, greaterCornerString);
+            insertStmt.setString(6, buildersString);
+            insertStmt.setString(7, containersString);
+            insertStmt.setString(8, accessorsString);
+            insertStmt.setString(9, managersString);
+            insertStmt.setBoolean(10, inheritNothing);
+            insertStmt.setLong(11, parentId);
             insertStmt.executeUpdate();
         }
         catch (SQLException e)
