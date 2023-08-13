@@ -112,8 +112,8 @@ public class DatabaseDataStore extends DataStore
         {
             //ensure the data tables exist
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_nextclaimid (nextid INTEGER)");
-            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_claimdata (id INTEGER, owner VARCHAR(50), server VARCHAR(16), lessercorner VARCHAR(100), greatercorner VARCHAR(100), builders TEXT, containers TEXT, accessors TEXT, managers TEXT, inheritnothing BOOLEAN, parentid INTEGER)");
-            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_playerdata (name VARCHAR(50), lastlogin DATETIME, accruedblocks INTEGER, bonusblocks INTEGER)");
+            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_claimdata (id INTEGER, owner VARCHAR(50), server VARCHAR(16), lessercorner JSON, greatercorner JSON, builders TEXT, containers TEXT, accessors TEXT, managers TEXT, inheritnothing BOOLEAN, parentid INTEGER)");
+            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_playerdata (name VARCHAR(32), lastlogin DATETIME, accruedblocks INTEGER, bonusblocks INTEGER)");
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_schemaversion (version INTEGER)");
 
             // By making this run only for MySQL, we technically support SQLite too, as this is the only invalid
@@ -459,12 +459,13 @@ public class DatabaseDataStore extends DataStore
 
         try (PreparedStatement insertStmt = this.databaseConnection.prepareStatement(SQL_INSERT_CLAIM))
         {
-
             insertStmt.setLong(1, claim.id);
             insertStmt.setString(2, owner);
             // TODO: 13/08/2023 - MouBieCat
             insertStmt.setString(3, GriefPrevention.instance.config_server_name);
+            // TODO: 13/08/2023 - MouBieCat - 這裡要改成 JSON > lesserCornerString
             insertStmt.setString(4, lesserCornerString);
+            // TODO: 13/08/2023 - MouBieCat - 這裡要改成 JSON > greaterCornerString
             insertStmt.setString(5, greaterCornerString);
             insertStmt.setString(6, buildersString);
             insertStmt.setString(7, containersString);
@@ -776,12 +777,10 @@ public class DatabaseDataStore extends DataStore
      */
     private String storageStringBuilder(ArrayList<String> input)
     {
-        String output = "";
+        final StringBuilder output = new StringBuilder();
         for (String string : input)
-        {
-            output += string + ";";
-        }
-        return output;
+            output.append(string).append(";");
+        return output.toString();
     }
 
 }

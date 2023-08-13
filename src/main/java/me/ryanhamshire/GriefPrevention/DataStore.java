@@ -19,13 +19,15 @@
 package me.ryanhamshire.GriefPrevention;
 
 import com.google.common.io.Files;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.griefprevention.visualization.BoundaryVisualization;
 import com.griefprevention.visualization.VisualizationType;
-import me.ryanhamshire.GriefPrevention.events.ClaimModifiedEvent;
-import me.ryanhamshire.GriefPrevention.events.ClaimResizeEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimCreatedEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimDeletedEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimExtendEvent;
+import me.ryanhamshire.GriefPrevention.events.ClaimModifiedEvent;
+import me.ryanhamshire.GriefPrevention.events.ClaimResizeEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimTransferEvent;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -42,6 +44,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Tameable;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -204,7 +207,7 @@ public abstract class DataStore
             GriefPrevention.AddLogEntry("Successfully hooked into WorldGuard.");
         }
         //if failed, world guard compat features will just be disabled.
-        catch (IllegalStateException | IllegalArgumentException | ClassCastException | NoClassDefFoundError ignored) { }
+        catch (IllegalStateException | IllegalArgumentException | ClassCastException | NoClassDefFoundError ignored) {}
     }
 
     private void loadSoftMutes()
@@ -526,61 +529,25 @@ public abstract class DataStore
         }
     }
 
-    //turns a location into a string, useful in data storage
-    private final String locationStringDelimiter = ";";
-
+    @SuppressWarnings("ConstantConditions")
     String locationToString(Location location)
     {
-        StringBuilder stringBuilder = new StringBuilder(location.getWorld().getName());
-        stringBuilder.append(locationStringDelimiter);
-        stringBuilder.append(location.getBlockX());
-        stringBuilder.append(locationStringDelimiter);
-        stringBuilder.append(location.getBlockY());
-        stringBuilder.append(locationStringDelimiter);
-        stringBuilder.append(location.getBlockZ());
-
-        return stringBuilder.toString();
+        final JsonObject jsonLocation = new JsonObject();
+        jsonLocation.addProperty("world", location.getWorld().getName());
+        jsonLocation.addProperty("x", location.getBlockX());
+        jsonLocation.addProperty("y", location.getBlockY());
+        jsonLocation.addProperty("z", location.getBlockZ());
+        return jsonLocation.toString();
     }
 
-    //turns a location string back into a location
-    Location locationFromString(String string, List<World> validWorlds) throws Exception
+    @NotNull Location locationFromString(String string, List<World> validWorlds) throws Exception
     {
-        //split the input string on the space
-        String[] elements = string.split(locationStringDelimiter);
-
-        //expect four elements - world name, X, Y, and Z, respectively
-        if (elements.length < 4)
-        {
-            throw new Exception("Expected four distinct parts to the location string: \"" + string + "\"");
-        }
-
-        String worldName = elements[0];
-        String xString = elements[1];
-        String yString = elements[2];
-        String zString = elements[3];
-
-        //identify world the claim is in
-        World world = null;
-        for (World w : validWorlds)
-        {
-            if (w.getName().equalsIgnoreCase(worldName))
-            {
-                world = w;
-                break;
-            }
-        }
-
+        final JsonObject jsonLocation = new Gson().fromJson(string, JsonObject.class);
+        final World world = validWorlds.stream().filter(w -> w.getName().equalsIgnoreCase(jsonLocation.get("world").getAsString())).findFirst().orElse(null);
         if (world == null)
-        {
-            throw new Exception("World not found: \"" + worldName + "\"");
-        }
+            throw new Exception("World not found: \"" + jsonLocation.get("world").getAsString() + "\"");
 
-        //convert those numerical strings to integer values
-        int x = Integer.parseInt(xString);
-        int y = Integer.parseInt(yString);
-        int z = Integer.parseInt(zString);
-
-        return new Location(world, x, y, z);
+        return new Location(world, jsonLocation.get("x").getAsInt(), jsonLocation.get("y").getAsInt(), jsonLocation.get("z").getAsInt());
     }
 
     //saves any changes to a claim to secondary storage
@@ -801,7 +768,7 @@ public abstract class DataStore
                 for (Claim subClaim : claim.children)
                 {
                     if (subClaim.getID() == id)
-                    return subClaim;
+                        return subClaim;
                 }
             }
         }
@@ -842,11 +809,13 @@ public abstract class DataStore
         return getChunkHash(location.getBlockX() >> 4, location.getBlockZ() >> 4);
     }
 
-    public static ArrayList<Long> getChunkHashes(Claim claim) {
+    public static ArrayList<Long> getChunkHashes(Claim claim)
+    {
         return getChunkHashes(claim.getLesserBoundaryCorner(), claim.getGreaterBoundaryCorner());
     }
 
-    public static ArrayList<Long> getChunkHashes(Location min, Location max) {
+    public static ArrayList<Long> getChunkHashes(Location min, Location max)
+    {
         ArrayList<Long> hashes = new ArrayList<>();
         int smallX = min.getBlockX() >> 4;
         int smallZ = min.getBlockZ() >> 4;
@@ -1100,7 +1069,8 @@ public abstract class DataStore
      * @param newDepth the new depth
      * @return the sanitized new depth
      */
-    private int sanitizeClaimDepth(Claim claim, int newDepth) {
+    private int sanitizeClaimDepth(Claim claim, int newDepth)
+    {
         if (claim.parent != null) claim = claim.parent;
 
         // Get the old depth including the depth of the lowest subdivision.
@@ -1126,7 +1096,8 @@ public abstract class DataStore
      * @param claim the claim
      * @param newDepth the new depth
      */
-    private void setNewDepth(Claim claim, int newDepth) {
+    private void setNewDepth(Claim claim, int newDepth)
+    {
         if (claim.parent != null) claim = claim.parent;
 
         final int depth = sanitizeClaimDepth(claim, newDepth);
@@ -1914,7 +1885,7 @@ public abstract class DataStore
             {
                 playerID = UUIDFetcher.getUUIDOf(name);
             }
-            catch (Exception ex) { }
+            catch (Exception ex) {}
 
             //if successful, replace player name with corresponding UUID
             if (playerID != null)
