@@ -246,10 +246,10 @@ public class GriefPrevention extends JavaPlugin
     public boolean config_ban_useCommand;
     public String config_ban_commandFormat;
 
-    private String databaseUrl;
-    private String databaseUserName;
-    private String databasePassword;
-    private boolean databaseSyncPlayerData;
+    public String databaseUrl;
+    public String databaseUserName;
+    public String databasePassword;
+    public boolean databaseSyncPlayerData;
 
     private final ClaimCheckTask claimCheckTask = new ClaimCheckTask(this);;
 
