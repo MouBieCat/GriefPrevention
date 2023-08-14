@@ -24,6 +24,7 @@ import com.google.gson.JsonObject;
 import com.griefprevention.visualization.BoundaryVisualization;
 import com.griefprevention.visualization.VisualizationType;
 import me.ryanhamshire.GriefPrevention.events.ClaimCreatedEvent;
+import me.ryanhamshire.GriefPrevention.events.ClaimCreatedSuccessEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimDeletedEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimExtendEvent;
 import me.ryanhamshire.GriefPrevention.events.ClaimModifiedEvent;
@@ -976,10 +977,12 @@ public abstract class DataStore
             result.succeeded = false;
             result.claim = null;
             return result;
-
         }
         //otherwise add this new claim to the data store to make it effective
         this.addClaim(newClaim, true);
+
+        ClaimCreatedSuccessEvent successEvent = new ClaimCreatedSuccessEvent(newClaim, creatingPlayer);
+        Bukkit.getPluginManager().callEvent(successEvent);
 
         //then return success along with reference to new claim
         result.succeeded = true;
