@@ -24,7 +24,10 @@ import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.Charset;
@@ -113,7 +116,7 @@ public class DatabaseDataStore extends DataStore
             //ensure the data tables exist
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_nextclaimid (nextid INTEGER)");
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_claimdata (id INTEGER, owner VARCHAR(50), server VARCHAR(16), world VARCHAR(16), lessercorner JSON, greatercorner JSON, builders TEXT, containers TEXT, accessors TEXT, managers TEXT, inheritnothing BOOLEAN, parentid INTEGER)");
-            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_playerdata (name VARCHAR(32), lastlogin DATETIME, accruedblocks INTEGER, bonusblocks INTEGER)");
+            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_playerdata (name VARCHAR(36), lastlogin DATETIME, accruedblocks INTEGER, bonusblocks INTEGER)");
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_schemaversion (version INTEGER)");
 
             // By making this run only for MySQL, we technically support SQLite too, as this is the only invalid
@@ -587,7 +590,7 @@ public class DatabaseDataStore extends DataStore
             try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_PLAYER_DATA);
                  PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
             {
-                OfflinePlayer player = Bukkit.getOfflinePlayer(UUID.fromString(playerID.toString()));
+                OfflinePlayer player = Bukkit.getOfflinePlayer(playerID);
 
                 SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                 String dateString = sqlFormat.format(new Date(player.getLastPlayed()));
@@ -660,25 +663,60 @@ public class DatabaseDataStore extends DataStore
     @Override
     synchronized void saveGroupBonusBlocks(String groupName, int currentValue)
     {
-        //group bonus blocks are stored in the player data table, with player name = $groupName
-        try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_GROUP_DATA);
-             PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
+        if (this.syncPlayerData)
         {
-            SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            String dateString = sqlFormat.format(new Date());
-            deleteStmnt.setString(1, '$' + groupName);
-            deleteStmnt.executeUpdate();
+            //group bonus blocks are stored in the player data table, with player name = $groupName
+            try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_GROUP_DATA);
+                 PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
+            {
+                SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                String dateString = sqlFormat.format(new Date());
+                deleteStmnt.setString(1, '$' + groupName);
+                deleteStmnt.executeUpdate();
 
-            insertStmnt.setString(1, '$' + groupName);
-            insertStmnt.setString(2, dateString);
-            insertStmnt.setInt(3, 0);
-            insertStmnt.setInt(4, currentValue);
-            insertStmnt.executeUpdate();
+                insertStmnt.setString(1, '$' + groupName);
+                insertStmnt.setString(2, dateString);
+                insertStmnt.setInt(3, 0);
+                insertStmnt.setInt(4, currentValue);
+                insertStmnt.executeUpdate();
+            }
+            catch (SQLException e)
+            {
+                GriefPrevention.AddLogEntry("Unable to save data for group " + groupName + ".  Details:");
+                GriefPrevention.AddLogEntry(e.getMessage());
+            }
         }
-        catch (SQLException e)
+        else
         {
-            GriefPrevention.AddLogEntry("Unable to save data for group " + groupName + ".  Details:");
-            GriefPrevention.AddLogEntry(e.getMessage());
+            //write changes to file to ensure they don't get lost
+            BufferedWriter outStream = null;
+            try
+            {
+                //open the group's file
+                File groupDataFile = new File(playerDataFolderPath + File.separator + "$" + groupName);
+                groupDataFile.createNewFile();
+                outStream = new BufferedWriter(new FileWriter(groupDataFile));
+
+                //first line is number of bonus blocks
+                outStream.write(String.valueOf(currentValue));
+                outStream.newLine();
+            }
+
+            //if any problem, log it
+            catch (Exception e)
+            {
+                GriefPrevention.AddLogEntry("Unexpected exception saving data for group \"" + groupName + "\": " + e.getMessage());
+            }
+
+            try
+            {
+                //close the file
+                if (outStream != null)
+                {
+                    outStream.close();
+                }
+            }
+            catch (IOException ignored) {}
         }
     }
 

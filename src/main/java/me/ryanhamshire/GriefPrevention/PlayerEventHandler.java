@@ -38,7 +38,6 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
-import org.bukkit.command.Command;
 import org.bukkit.entity.AbstractHorse;
 import org.bukkit.entity.Animals;
 import org.bukkit.entity.Creature;
@@ -62,13 +61,10 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
-import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerEggThrowEvent;
-import org.bukkit.event.player.PlayerEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
@@ -77,7 +73,6 @@ import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerLoginEvent;
-import org.bukkit.event.player.PlayerLoginEvent.Result;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -90,8 +85,6 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.metadata.MetadataValue;
-import org.bukkit.plugin.Plugin;
-import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.BlockIterator;
 
@@ -125,10 +118,7 @@ class PlayerEventHandler implements Listener
     private final ArrayList<Long> recentLoginLogoutNotifications = new ArrayList<>();
 
     //regex pattern for the "how do i claim land?" scanner
-    private Pattern howToClaimPattern = null;
-
-    //matcher for banned words
-    private final WordFinder bannedWordFinder;
+    private final Pattern howToClaimPattern = null;
 
     //spam tracker
     SpamDetector spamDetector = new SpamDetector();
@@ -138,494 +128,20 @@ class PlayerEventHandler implements Listener
     {
         this.dataStore = dataStore;
         this.instance = plugin;
-        bannedWordFinder = new WordFinder(instance.dataStore.loadBannedWords());
-    }
-
-    protected void resetPattern()
-    {
-        this.howToClaimPattern = null;
-    }
-
-    //when a player chats, monitor for spam
-    @EventHandler(ignoreCancelled = true, priority = EventPriority.LOWEST)
-    synchronized void onPlayerChat(AsyncPlayerChatEvent event)
-    {
-        Player player = event.getPlayer();
-        if (!player.isOnline())
-        {
-            event.setCancelled(true);
-            return;
-        }
-
-        String message = event.getMessage();
-
-        boolean muted = this.handlePlayerChat(player, message, event);
-        Set<Player> recipients = event.getRecipients();
-
-        //muted messages go out to only the sender
-        if (muted)
-        {
-            recipients.clear();
-            recipients.add(player);
-        }
-
-        //soft muted messages go out to all soft muted players
-        else if (this.dataStore.isSoftMuted(player.getUniqueId()))
-        {
-            String notificationMessage = "(Muted " + player.getName() + "): " + message;
-            Set<Player> recipientsToKeep = new HashSet<>();
-            for (Player recipient : recipients)
-            {
-                if (this.dataStore.isSoftMuted(recipient.getUniqueId()))
-                {
-                    recipientsToKeep.add(recipient);
-                }
-                else if (recipient.hasPermission("griefprevention.eavesdrop"))
-                {
-                    recipient.sendMessage(ChatColor.GRAY + notificationMessage);
-                }
-            }
-            recipients.clear();
-            recipients.addAll(recipientsToKeep);
-
-            GriefPrevention.AddLogEntry(notificationMessage, CustomLogEntryTypes.MutedChat, false);
-        }
-
-        //troll and excessive profanity filter
-        else if (!player.hasPermission("griefprevention.spam") && this.bannedWordFinder.hasMatch(message))
-        {
-            //allow admins to see the soft-muted text
-            String notificationMessage = "(Muted " + player.getName() + "): " + message;
-            for (Player recipient : recipients)
-            {
-                if (recipient.hasPermission("griefprevention.eavesdrop"))
-                {
-                    recipient.sendMessage(ChatColor.GRAY + notificationMessage);
-                }
-            }
-
-            //limit recipients to sender
-            recipients.clear();
-            recipients.add(player);
-
-            //if player not new warn for the first infraction per play session.
-            if (!GriefPrevention.isNewToServer(player))
-            {
-                PlayerData playerData = instance.dataStore.getPlayerData(player.getUniqueId());
-                if (!playerData.profanityWarned)
-                {
-                    playerData.profanityWarned = true;
-                    GriefPrevention.sendMessage(player, TextMode.Err, Messages.NoProfanity);
-                    event.setCancelled(true);
-                    return;
-                }
-            }
-
-            //otherwise assume chat troll and mute all chat from this sender until an admin says otherwise
-            else if (instance.config_trollFilterEnabled)
-            {
-                GriefPrevention.AddLogEntry("Auto-muted new player " + player.getName() + " for profanity shortly after join.  Use /SoftMute to undo.", CustomLogEntryTypes.AdminActivity);
-                GriefPrevention.AddLogEntry(notificationMessage, CustomLogEntryTypes.MutedChat, false);
-                instance.dataStore.toggleSoftMute(player.getUniqueId());
-            }
-        }
-
-        //remaining messages
-        else
-        {
-            //enter in abridged chat logs
-            makeSocialLogEntry(player.getName(), message);
-
-            //based on ignore lists, remove some of the audience
-            if (!player.hasPermission("griefprevention.notignorable"))
-            {
-                Set<Player> recipientsToRemove = new HashSet<>();
-                PlayerData playerData = this.dataStore.getPlayerData(player.getUniqueId());
-                for (Player recipient : recipients)
-                {
-                    if (!recipient.hasPermission("griefprevention.notignorable"))
-                    {
-                        if (playerData.ignoredPlayers.containsKey(recipient.getUniqueId()))
-                        {
-                            recipientsToRemove.add(recipient);
-                        }
-                        else
-                        {
-                            PlayerData targetPlayerData = this.dataStore.getPlayerData(recipient.getUniqueId());
-                            if (targetPlayerData.ignoredPlayers.containsKey(player.getUniqueId()))
-                            {
-                                recipientsToRemove.add(recipient);
-                            }
-                        }
-                    }
-                }
-
-                recipients.removeAll(recipientsToRemove);
-            }
-        }
-    }
-
-    //returns true if the message should be muted, true if it should be sent
-    private boolean handlePlayerChat(Player player, String message, PlayerEvent event)
-    {
-        //FEATURE: automatically educate players about claiming land
-        //watching for message format how*claim*, and will send a link to the basics video
-        if (this.howToClaimPattern == null)
-        {
-            this.howToClaimPattern = Pattern.compile(this.dataStore.getMessage(Messages.HowToClaimRegex), Pattern.CASE_INSENSITIVE);
-        }
-
-        if (this.howToClaimPattern.matcher(message).matches())
-        {
-            if (instance.creativeRulesApply(player.getLocation()))
-            {
-                GriefPrevention.sendMessage(player, TextMode.Info, Messages.CreativeBasicsVideo2, 10L, DataStore.CREATIVE_VIDEO_URL);
-            }
-            else
-            {
-                GriefPrevention.sendMessage(player, TextMode.Info, Messages.SurvivalBasicsVideo2, 10L, DataStore.SURVIVAL_VIDEO_URL);
-            }
-        }
-
-        //FEATURE: automatically educate players about the /trapped command
-        //check for "trapped" or "stuck" to educate players about the /trapped command
-        String trappedwords = this.dataStore.getMessage(
-                Messages.TrappedChatKeyword
-        );
-        if (!trappedwords.isEmpty())
-        {
-            String[] checkWords = trappedwords.split(";");
-
-            for (String checkWord : checkWords)
-            {
-                if (!message.contains("/trapped")
-                        && message.contains(checkWord))
-                {
-                    GriefPrevention.sendMessage(
-                            player,
-                            TextMode.Info,
-                            Messages.TrappedInstructions,
-                            10L
-                    );
-                    break;
-                }
-            }
-        }
-
-        //FEATURE: monitor for chat and command spam
-
-        if (!instance.config_spam_enabled) return false;
-
-        //if the player has permission to spam, don't bother even examining the message
-        if (player.hasPermission("griefprevention.spam")) return false;
-
-        //examine recent messages to detect spam
-        SpamAnalysisResult result = this.spamDetector.AnalyzeMessage(player.getUniqueId(), message, System.currentTimeMillis());
-
-        //apply any needed changes to message (like lowercasing all-caps)
-        if (event instanceof AsyncPlayerChatEvent)
-        {
-            ((AsyncPlayerChatEvent) event).setMessage(result.finalMessage);
-        }
-
-        //don't allow new players to chat after logging in until they move
-        PlayerData playerData = this.dataStore.getPlayerData(player.getUniqueId());
-        if (playerData.noChatLocation != null)
-        {
-            Location currentLocation = player.getLocation();
-            if (currentLocation.getBlockX() == playerData.noChatLocation.getBlockX() &&
-                    currentLocation.getBlockZ() == playerData.noChatLocation.getBlockZ())
-            {
-                GriefPrevention.sendMessage(player, TextMode.Err, Messages.NoChatUntilMove, 10L);
-                result.muteReason = "pre-movement chat";
-            }
-            else
-            {
-                playerData.noChatLocation = null;
-            }
-        }
-
-        //filter IP addresses
-        if (result.muteReason == null)
-        {
-            if (instance.containsBlockedIP(message))
-            {
-                //block message
-                result.muteReason = "IP address";
-            }
-        }
-
-        //take action based on spam detector results
-        if (result.shouldBanChatter)
-        {
-            if (instance.config_spam_banOffenders)
-            {
-                //log entry
-                GriefPrevention.AddLogEntry("Banning " + player.getName() + " for spam.", CustomLogEntryTypes.AdminActivity);
-
-                //kick and ban
-                PlayerKickBanTask task = new PlayerKickBanTask(player, instance.config_spam_banMessage, "GriefPrevention Anti-Spam", true);
-                instance.getServer().getScheduler().scheduleSyncDelayedTask(instance, task, 1L);
-            }
-            else
-            {
-                //log entry
-                GriefPrevention.AddLogEntry("Kicking " + player.getName() + " for spam.", CustomLogEntryTypes.AdminActivity);
-
-                //just kick
-                PlayerKickBanTask task = new PlayerKickBanTask(player, "", "GriefPrevention Anti-Spam", false);
-                instance.getServer().getScheduler().scheduleSyncDelayedTask(instance, task, 1L);
-            }
-        }
-        else if (result.shouldWarnChatter)
-        {
-            //warn and log
-            GriefPrevention.sendMessage(player, TextMode.Warn, instance.config_spam_warningMessage, 10L);
-            GriefPrevention.AddLogEntry("Warned " + player.getName() + " about spam penalties.", CustomLogEntryTypes.Debug, true);
-        }
-
-        if (result.muteReason != null)
-        {
-            //mute and log
-            GriefPrevention.AddLogEntry("Muted " + result.muteReason + ".");
-            GriefPrevention.AddLogEntry("Muted " + player.getName() + " " + result.muteReason + ":" + message, CustomLogEntryTypes.Debug, true);
-
-            return true;
-        }
-
-        return false;
-    }
-
-    //when a player uses a slash command...
-    @EventHandler(ignoreCancelled = true, priority = EventPriority.LOWEST)
-    synchronized void onPlayerCommandPreprocess(PlayerCommandPreprocessEvent event)
-    {
-        String message = event.getMessage();
-        String[] args = message.split(" ");
-
-        String command = args[0].toLowerCase();
-
-        CommandCategory category = this.getCommandCategory(command);
-
-        Player player = event.getPlayer();
-        PlayerData playerData = null;
-
-        //if a whisper
-        if (category == CommandCategory.Whisper && args.length > 1)
-        {
-            //determine target player, might be NULL
-
-            Player targetPlayer = instance.getServer().getPlayer(args[1]);
-
-            //softmute feature
-            if (this.dataStore.isSoftMuted(player.getUniqueId()) && targetPlayer != null && !this.dataStore.isSoftMuted(targetPlayer.getUniqueId()))
-            {
-                event.setCancelled(true);
-                return;
-            }
-
-            //if eavesdrop enabled and sender doesn't have the eavesdrop immunity permission, eavesdrop
-            if (instance.config_whisperNotifications && !player.hasPermission("griefprevention.eavesdropimmune"))
-            {
-                //except for when the recipient has eavesdrop immunity
-                if (targetPlayer == null || !targetPlayer.hasPermission("griefprevention.eavesdropimmune"))
-                {
-                    StringBuilder logMessageBuilder = new StringBuilder();
-                    logMessageBuilder.append("[[").append(event.getPlayer().getName()).append("]] ");
-
-                    for (int i = 1; i < args.length; i++)
-                    {
-                        logMessageBuilder.append(args[i]).append(" ");
-                    }
-
-                    String logMessage = logMessageBuilder.toString();
-
-                    @SuppressWarnings("unchecked")
-                    Collection<Player> players = (Collection<Player>) instance.getServer().getOnlinePlayers();
-                    for (Player onlinePlayer : players)
-                    {
-                        if (onlinePlayer.hasPermission("griefprevention.eavesdrop") && !onlinePlayer.equals(targetPlayer) && !onlinePlayer.equals(player))
-                        {
-                            onlinePlayer.sendMessage(ChatColor.GRAY + logMessage);
-                        }
-                    }
-                }
-            }
-
-            //ignore feature
-            if (targetPlayer != null && targetPlayer.isOnline())
-            {
-                //if either is ignoring the other, cancel this command
-                playerData = this.dataStore.getPlayerData(player.getUniqueId());
-                if (playerData.ignoredPlayers.containsKey(targetPlayer.getUniqueId()) && !targetPlayer.hasPermission("griefprevention.notignorable"))
-                {
-                    event.setCancelled(true);
-                    GriefPrevention.sendMessage(player, TextMode.Err, Messages.IsIgnoringYou);
-                    return;
-                }
-
-                PlayerData targetPlayerData = this.dataStore.getPlayerData(targetPlayer.getUniqueId());
-                if (targetPlayerData.ignoredPlayers.containsKey(player.getUniqueId()) && !player.hasPermission("griefprevention.notignorable"))
-                {
-                    event.setCancelled(true);
-                    GriefPrevention.sendMessage(player, TextMode.Err, Messages.IsIgnoringYou);
-                    return;
-                }
-            }
-        }
-
-        //if in pvp, block any pvp-banned slash commands
-        if (playerData == null) playerData = this.dataStore.getPlayerData(event.getPlayer().getUniqueId());
-
-        if ((playerData.inPvpCombat() || playerData.siegeData != null) && instance.config_pvp_blockedCommands.contains(command))
-        {
-            event.setCancelled(true);
-            GriefPrevention.sendMessage(event.getPlayer(), TextMode.Err, Messages.CommandBannedInPvP);
-            return;
-        }
-
-        //soft mute for chat slash commands
-        if (category == CommandCategory.Chat && this.dataStore.isSoftMuted(player.getUniqueId()))
-        {
-            event.setCancelled(true);
-            return;
-        }
-
-        //if the slash command used is in the list of monitored commands, treat it like a chat message (see above)
-        boolean isMonitoredCommand = (category == CommandCategory.Chat || category == CommandCategory.Whisper);
-        if (isMonitoredCommand)
-        {
-            //if anti spam enabled, check for spam
-            if (instance.config_spam_enabled)
-            {
-                event.setCancelled(this.handlePlayerChat(event.getPlayer(), event.getMessage(), event));
-            }
-
-            if (!player.hasPermission("griefprevention.spam") && this.bannedWordFinder.hasMatch(message))
-            {
-                event.setCancelled(true);
-            }
-
-            //unless cancelled, log in abridged logs
-            if (!event.isCancelled())
-            {
-                StringBuilder builder = new StringBuilder();
-                for (String arg : args)
-                {
-                    builder.append(arg).append(' ');
-                }
-
-                makeSocialLogEntry(event.getPlayer().getName(), builder.toString());
-            }
-        }
-
-        //if requires access trust, check for permission
-        isMonitoredCommand = false;
-        String lowerCaseMessage = message.toLowerCase();
-        for (String monitoredCommand : instance.config_claims_commandsRequiringAccessTrust)
-        {
-            if (lowerCaseMessage.startsWith(monitoredCommand))
-            {
-                isMonitoredCommand = true;
-                break;
-            }
-        }
-
-        if (isMonitoredCommand)
-        {
-            Claim claim = this.dataStore.getClaimAt(player.getLocation(), false, playerData.lastClaim);
-            if (claim != null)
-            {
-                playerData.lastClaim = claim;
-                Supplier<String> reason = claim.checkPermission(player, ClaimPermission.Access, event);
-                if (reason != null)
-                {
-                    GriefPrevention.sendMessage(player, TextMode.Err, reason.get());
-                    event.setCancelled(true);
-                }
-            }
-        }
     }
 
     private final ConcurrentHashMap<String, CommandCategory> commandCategoryMap = new ConcurrentHashMap<>();
-
-    private CommandCategory getCommandCategory(String commandName)
-    {
-        if (commandName.startsWith("/")) commandName = commandName.substring(1);
-
-        //if we've seen this command or alias before, return the category determined previously
-        CommandCategory category = this.commandCategoryMap.get(commandName);
-        if (category != null) return category;
-
-        //otherwise build a list of all the aliases of this command across all installed plugins
-        HashSet<String> aliases = new HashSet<>();
-        aliases.add(commandName);
-        aliases.add("minecraft:" + commandName);
-        for (Plugin plugin : Bukkit.getServer().getPluginManager().getPlugins())
-        {
-            if (!(plugin instanceof JavaPlugin))
-                continue;
-            JavaPlugin javaPlugin = (JavaPlugin) plugin;
-            Command command = javaPlugin.getCommand(commandName);
-            if (command != null)
-            {
-                aliases.add(command.getName().toLowerCase());
-                aliases.add(plugin.getName().toLowerCase() + ":" + command.getName().toLowerCase());
-                for (String alias : command.getAliases())
-                {
-                    aliases.add(alias.toLowerCase());
-                    aliases.add(plugin.getName().toLowerCase() + ":" + alias.toLowerCase());
-                }
-            }
-        }
-
-        //also consider vanilla commands
-        Command command = Bukkit.getServer().getPluginCommand(commandName);
-        if (command != null)
-        {
-            aliases.add(command.getName().toLowerCase());
-            aliases.add("minecraft:" + command.getName().toLowerCase());
-            for (String alias : command.getAliases())
-            {
-                aliases.add(alias.toLowerCase());
-                aliases.add("minecraft:" + alias.toLowerCase());
-            }
-        }
-
-        //if any of those aliases are in the chat list or whisper list, then we know the category for that command
-        category = CommandCategory.None;
-        for (String alias : aliases)
-        {
-            if (instance.config_eavesdrop_whisperCommands.contains("/" + alias))
-            {
-                category = CommandCategory.Whisper;
-            }
-            else if (instance.config_spam_monitorSlashCommands.contains("/" + alias))
-            {
-                category = CommandCategory.Chat;
-            }
-
-            //remember the categories for later
-            this.commandCategoryMap.put(alias.toLowerCase(), category);
-        }
-
-        return category;
-    }
 
     static int longestNameLength = 10;
 
     static void makeSocialLogEntry(String name, String message)
     {
-        StringBuilder entryBuilder = new StringBuilder(name);
-        for (int i = name.length(); i < longestNameLength; i++)
-        {
-            entryBuilder.append(' ');
-        }
-        entryBuilder.append(": ").append(message);
+        String entryBuilder = name + " ".repeat(Math.max(0, longestNameLength - name.length())) +
+                ": " + message;
 
         longestNameLength = Math.max(longestNameLength, name.length());
         //TODO: cleanup static
-        GriefPrevention.AddLogEntry(entryBuilder.toString(), CustomLogEntryTypes.SocialActivity, true);
+        GriefPrevention.AddLogEntry(entryBuilder, CustomLogEntryTypes.SocialActivity, true);
     }
 
     private final ConcurrentHashMap<UUID, Date> lastLoginThisServerSessionMap = new ConcurrentHashMap<>();
@@ -635,43 +151,6 @@ class PlayerEventHandler implements Listener
     void onPlayerLogin(PlayerLoginEvent event)
     {
         Player player = event.getPlayer();
-
-        //all this is anti-spam code
-        if (instance.config_spam_enabled)
-        {
-            //FEATURE: login cooldown to prevent login/logout spam with custom clients
-            long now = Calendar.getInstance().getTimeInMillis();
-
-            //if allowed to join and login cooldown enabled
-            if (instance.config_spam_loginCooldownSeconds > 0 && event.getResult() == Result.ALLOWED && !player.hasPermission("griefprevention.spam"))
-            {
-                //determine how long since last login and cooldown remaining
-                Date lastLoginThisSession = lastLoginThisServerSessionMap.get(player.getUniqueId());
-                if (lastLoginThisSession != null)
-                {
-                    long millisecondsSinceLastLogin = now - lastLoginThisSession.getTime();
-                    long secondsSinceLastLogin = millisecondsSinceLastLogin / 1000;
-                    long cooldownRemaining = instance.config_spam_loginCooldownSeconds - secondsSinceLastLogin;
-
-                    //if cooldown remaining
-                    if (cooldownRemaining > 0)
-                    {
-                        //DAS BOOT!
-                        event.setResult(Result.KICK_OTHER);
-                        event.setKickMessage("You must wait " + cooldownRemaining + " seconds before logging-in again.");
-                        event.disallow(event.getResult(), event.getKickMessage());
-                        return;
-                    }
-                }
-            }
-
-            //if logging-in account is banned, remember IP address for later
-            if (instance.config_smartBan && event.getResult() == Result.KICK_BANNED)
-            {
-                this.tempBannedIps.add(new IpBanInfo(event.getAddress(), now + this.MILLISECONDS_IN_DAY, player.getName()));
-            }
-        }
-
         //remember the player's ip address
         PlayerData playerData = this.dataStore.getPlayerData(player.getUniqueId());
         playerData.ipAddress = event.getAddress();
@@ -943,7 +422,8 @@ class PlayerEventHandler implements Listener
             {
                 // 這裡會拋出異常，但是我們不會在意。
                 isBanned = player.isBanned();
-            } catch (final Exception e)
+            }
+            catch (final Exception e)
             {
                 // 這裡會拋出異常，但是我們不會在意。
                 // 直接略過，返回 false
