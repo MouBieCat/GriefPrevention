@@ -52,7 +52,7 @@ public class DatabaseDataStore extends DataStore
     private static final String SQL_UPDATE_NAME =
             "UPDATE griefprevention_playerdata SET name = ? WHERE name = ?";
     private static final String SQL_INSERT_CLAIM =
-            "INSERT INTO griefprevention_claimdata (id, owner, server, lessercorner, greatercorner, builders, containers, accessors, managers, inheritnothing, parentid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            "INSERT INTO griefprevention_claimdata (id, owner, server, world, lessercorner, greatercorner, builders, containers, accessors, managers, inheritnothing, parentid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String SQL_DELETE_CLAIM =
             "DELETE FROM griefprevention_claimdata WHERE id = ?";
     private static final String SQL_SELECT_PLAYER_DATA =
@@ -112,7 +112,7 @@ public class DatabaseDataStore extends DataStore
         {
             //ensure the data tables exist
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_nextclaimid (nextid INTEGER)");
-            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_claimdata (id INTEGER, owner VARCHAR(50), server VARCHAR(16), lessercorner JSON, greatercorner JSON, builders TEXT, containers TEXT, accessors TEXT, managers TEXT, inheritnothing BOOLEAN, parentid INTEGER)");
+            statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_claimdata (id INTEGER, owner VARCHAR(50), server VARCHAR(16), world VARCHAR(16), lessercorner JSON, greatercorner JSON, builders TEXT, containers TEXT, accessors TEXT, managers TEXT, inheritnothing BOOLEAN, parentid INTEGER)");
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_playerdata (name VARCHAR(32), lastlogin DATETIME, accruedblocks INTEGER, bonusblocks INTEGER)");
             statement.execute("CREATE TABLE IF NOT EXISTS griefprevention_schemaversion (version INTEGER)");
 
@@ -436,6 +436,7 @@ public class DatabaseDataStore extends DataStore
     }
 
     //actually writes claim data to the database
+    @SuppressWarnings("ConstantConditions")
     synchronized private void writeClaimData(Claim claim) throws SQLException
     {
         String lesserCornerString = this.locationToString(claim.getLesserBoundaryCorner());
@@ -461,18 +462,16 @@ public class DatabaseDataStore extends DataStore
         {
             insertStmt.setLong(1, claim.id);
             insertStmt.setString(2, owner);
-            // TODO: 13/08/2023 - MouBieCat
             insertStmt.setString(3, GriefPrevention.instance.config_server_name);
-            // TODO: 13/08/2023 - MouBieCat - 這裡要改成 JSON > lesserCornerString
-            insertStmt.setString(4, lesserCornerString);
-            // TODO: 13/08/2023 - MouBieCat - 這裡要改成 JSON > greaterCornerString
-            insertStmt.setString(5, greaterCornerString);
-            insertStmt.setString(6, buildersString);
-            insertStmt.setString(7, containersString);
-            insertStmt.setString(8, accessorsString);
-            insertStmt.setString(9, managersString);
-            insertStmt.setBoolean(10, inheritNothing);
-            insertStmt.setLong(11, parentId);
+            insertStmt.setString(4, claim.getLesserBoundaryCorner().getWorld().getName());
+            insertStmt.setString(5, lesserCornerString);
+            insertStmt.setString(6, greaterCornerString);
+            insertStmt.setString(7, buildersString);
+            insertStmt.setString(8, containersString);
+            insertStmt.setString(9, accessorsString);
+            insertStmt.setString(10, managersString);
+            insertStmt.setBoolean(11, inheritNothing);
+            insertStmt.setLong(12, parentId);
             insertStmt.executeUpdate();
         }
         catch (SQLException e)
