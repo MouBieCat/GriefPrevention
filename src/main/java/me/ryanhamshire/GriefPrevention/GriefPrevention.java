@@ -249,7 +249,6 @@ public class GriefPrevention extends JavaPlugin
     public String databaseUrl;
     public String databaseUserName;
     public String databasePassword;
-    public boolean databaseSyncPlayerData;
 
     private final ClaimCheckTask claimCheckTask = new ClaimCheckTask(this);;
 
@@ -296,7 +295,7 @@ public class GriefPrevention extends JavaPlugin
         {
             try
             {
-                DatabaseDataStore databaseStore = new DatabaseDataStore(this.databaseUrl, this.databaseUserName, this.databasePassword, this.databaseSyncPlayerData);
+                DatabaseDataStore databaseStore = new DatabaseDataStore(this.databaseUrl, this.databaseUserName, this.databasePassword);
 
                 if (FlatFileDataStore.hasData())
                 {
@@ -787,7 +786,6 @@ public class GriefPrevention extends JavaPlugin
         this.databaseUrl = config.getString("GriefPrevention.Database.URL", "");
         this.databaseUserName = config.getString("GriefPrevention.Database.UserName", "");
         this.databasePassword = config.getString("GriefPrevention.Database.Password", "");
-        this.databaseSyncPlayerData = config.getBoolean("GriefPrevention.Database.MouBieCat.SyncPlayerData", true);
 
         this.config_advanced_fixNegativeClaimblockAmounts = config.getBoolean("GriefPrevention.Advanced.fixNegativeClaimblockAmounts", true);
         this.config_advanced_claim_expiration_check_rate = config.getInt("GriefPrevention.Advanced.ClaimExpirationCheckRate", 60);
@@ -927,7 +925,6 @@ public class GriefPrevention extends JavaPlugin
         outConfig.set("GriefPrevention.Database.URL", this.databaseUrl);
         outConfig.set("GriefPrevention.Database.UserName", this.databaseUserName);
         outConfig.set("GriefPrevention.Database.Password", this.databasePassword);
-        outConfig.set("GriefPrevention.Database.MouBieCat.SyncPlayerData", this.databaseSyncPlayerData);
 
         outConfig.set("GriefPrevention.UseBanCommand", this.config_ban_useCommand);
         outConfig.set("GriefPrevention.BanCommandPattern", this.config_ban_commandFormat);

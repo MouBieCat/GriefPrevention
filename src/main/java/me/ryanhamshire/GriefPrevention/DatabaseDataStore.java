@@ -82,19 +82,12 @@ public class DatabaseDataStore extends DataStore
     private final String databaseUrl;
     private final String userName;
     private final String password;
-    private final boolean syncPlayerData;
 
-    DatabaseDataStore(String url, String userName, String password, boolean syncPlayerData) throws Exception
+    DatabaseDataStore(String url, String userName, String password) throws Exception
     {
         this.databaseUrl = url;
         this.userName = userName;
         this.password = password;
-        this.syncPlayerData = syncPlayerData;
-        if (!this.syncPlayerData)
-        {
-            GriefPrevention.AddLogEntry("[MouBieCat]: 已經關閉資料庫同步功能，現在該分流已不同步玩家資料。");
-        }
-
         this.initialize();
     }
 
@@ -507,72 +500,22 @@ public class DatabaseDataStore extends DataStore
         final PlayerData playerData = new PlayerData();
         playerData.playerID = playerID;
 
-        if (this.syncPlayerData)
+        try (final PreparedStatement preparedStatement = this.databaseConnection.prepareStatement(SQL_SELECT_PLAYER_DATA))
         {
-            try (final PreparedStatement preparedStatement = this.databaseConnection.prepareStatement(SQL_SELECT_PLAYER_DATA))
+            preparedStatement.setString(1, playerID.toString());
+            final ResultSet results = preparedStatement.executeQuery();
+            //if data for this player exists, use it
+            if (results.next())
             {
-                preparedStatement.setString(1, playerID.toString());
-                final ResultSet results = preparedStatement.executeQuery();
-                //if data for this player exists, use it
-                if (results.next())
-                {
-                    playerData.setAccruedClaimBlocks(results.getInt("accruedblocks"));
-                    playerData.setBonusClaimBlocks(results.getInt("bonusblocks"));
-                }
-            }
-            catch (final SQLException e)
-            {
-                final StringWriter errors = new StringWriter();
-                e.printStackTrace(new PrintWriter(errors));
-                GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
+                playerData.setAccruedClaimBlocks(results.getInt("accruedblocks"));
+                playerData.setBonusClaimBlocks(results.getInt("bonusblocks"));
             }
         }
-        else
+        catch (final SQLException e)
         {
-            final File playerFile = new File(playerDataFolderPath + File.separator + playerID.toString());
-
-            if (playerFile.exists())
-            {
-                boolean needRetry;
-                int retriesRemaining = 5;
-                Exception latestException = null;
-                do
-                {
-                    try
-                    {
-                        needRetry = false;
-                        final List<String> lines = Files.readLines(playerFile, Charset.forName("UTF-8"));
-                        final Iterator<String> iterator = lines.iterator();
-                        iterator.next();
-                        final String accruedBlocksString = iterator.next();
-                        playerData.setAccruedClaimBlocks(Integer.parseInt(accruedBlocksString));
-                        final String bonusBlocksString = iterator.next();
-                        playerData.setBonusClaimBlocks(Integer.parseInt(bonusBlocksString));
-                    }
-                    catch (Exception e)
-                    {
-                        latestException = e;
-                        needRetry = true;
-                        retriesRemaining--;
-                    }
-
-                    try
-                    {
-                        if (needRetry) Thread.sleep(5);
-                    }
-                    catch (final InterruptedException ignored) {}
-
-                } while (needRetry && retriesRemaining >= 0);
-
-                //if last attempt failed, log information about the problem
-                if (needRetry)
-                {
-                    final StringWriter errors = new StringWriter();
-                    latestException.printStackTrace(new PrintWriter(errors));
-                    GriefPrevention.AddLogEntry("Failed to load PlayerData for " + playerID + ". This usually occurs when your server runs out of storage space, causing any file saves to corrupt. Fix or delete the file in GriefPrevetionData/PlayerData/" + playerID, CustomLogEntryTypes.Debug, false);
-                    GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
-                }
-            }
+            final StringWriter errors = new StringWriter();
+            e.printStackTrace(new PrintWriter(errors));
+            GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
         }
 
         return playerData;
@@ -585,52 +528,27 @@ public class DatabaseDataStore extends DataStore
         //never save data for the "administrative" account.  an empty string for player name indicates administrative account
         if (playerID == null) return;
 
-        if (this.syncPlayerData)
+        try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_PLAYER_DATA);
+             PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
         {
-            try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_PLAYER_DATA);
-                 PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
-            {
-                OfflinePlayer player = Bukkit.getOfflinePlayer(playerID);
+            OfflinePlayer player = Bukkit.getOfflinePlayer(playerID);
 
-                SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                String dateString = sqlFormat.format(new Date(player.getLastPlayed()));
-                deleteStmnt.setString(1, playerID.toString());
-                deleteStmnt.executeUpdate();
+            SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String dateString = sqlFormat.format(new Date(player.getLastPlayed()));
+            deleteStmnt.setString(1, playerID.toString());
+            deleteStmnt.executeUpdate();
 
-                insertStmnt.setString(1, playerID.toString());
-                insertStmnt.setString(2, dateString);
-                insertStmnt.setInt(3, playerData.getAccruedClaimBlocks());
-                insertStmnt.setInt(4, playerData.getBonusClaimBlocks());
-                insertStmnt.executeUpdate();
-            }
-            catch (SQLException e)
-            {
-                StringWriter errors = new StringWriter();
-                e.printStackTrace(new PrintWriter(errors));
-                GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
-            }
+            insertStmnt.setString(1, playerID.toString());
+            insertStmnt.setString(2, dateString);
+            insertStmnt.setInt(3, playerData.getAccruedClaimBlocks());
+            insertStmnt.setInt(4, playerData.getBonusClaimBlocks());
+            insertStmnt.executeUpdate();
         }
-        else
+        catch (SQLException e)
         {
-            final StringBuilder fileContent = new StringBuilder();
-            try
-            {
-                fileContent.append("\n");
-                fileContent.append(playerData.getAccruedClaimBlocks());
-                fileContent.append("\n");
-                fileContent.append(String.valueOf(playerData.getBonusClaimBlocks()));
-                fileContent.append("\n");
-                fileContent.append("\n");
-                File playerDataFile = new File(playerDataFolderPath + File.separator + playerID.toString());
-                Files.write(fileContent.toString().getBytes(StandardCharsets.UTF_8), playerDataFile);
-            }
-
-            //if any problem, log it
-            catch (final Exception e)
-            {
-                GriefPrevention.AddLogEntry("GriefPrevention: Unexpected exception saving data for player \"" + playerID.toString() + "\": " + e.getMessage());
-                e.printStackTrace();
-            }
+            StringWriter errors = new StringWriter();
+            e.printStackTrace(new PrintWriter(errors));
+            GriefPrevention.AddLogEntry(playerID + " " + errors.toString(), CustomLogEntryTypes.Exception);
         }
     }
 
@@ -663,60 +581,25 @@ public class DatabaseDataStore extends DataStore
     @Override
     synchronized void saveGroupBonusBlocks(String groupName, int currentValue)
     {
-        if (this.syncPlayerData)
+        //group bonus blocks are stored in the player data table, with player name = $groupName
+        try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_GROUP_DATA);
+             PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
         {
-            //group bonus blocks are stored in the player data table, with player name = $groupName
-            try (PreparedStatement deleteStmnt = this.databaseConnection.prepareStatement(SQL_DELETE_GROUP_DATA);
-                 PreparedStatement insertStmnt = this.databaseConnection.prepareStatement(SQL_INSERT_PLAYER_DATA))
-            {
-                SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                String dateString = sqlFormat.format(new Date());
-                deleteStmnt.setString(1, '$' + groupName);
-                deleteStmnt.executeUpdate();
+            SimpleDateFormat sqlFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String dateString = sqlFormat.format(new Date());
+            deleteStmnt.setString(1, '$' + groupName);
+            deleteStmnt.executeUpdate();
 
-                insertStmnt.setString(1, '$' + groupName);
-                insertStmnt.setString(2, dateString);
-                insertStmnt.setInt(3, 0);
-                insertStmnt.setInt(4, currentValue);
-                insertStmnt.executeUpdate();
-            }
-            catch (SQLException e)
-            {
-                GriefPrevention.AddLogEntry("Unable to save data for group " + groupName + ".  Details:");
-                GriefPrevention.AddLogEntry(e.getMessage());
-            }
+            insertStmnt.setString(1, '$' + groupName);
+            insertStmnt.setString(2, dateString);
+            insertStmnt.setInt(3, 0);
+            insertStmnt.setInt(4, currentValue);
+            insertStmnt.executeUpdate();
         }
-        else
+        catch (SQLException e)
         {
-            //write changes to file to ensure they don't get lost
-            BufferedWriter outStream = null;
-            try
-            {
-                //open the group's file
-                File groupDataFile = new File(playerDataFolderPath + File.separator + "$" + groupName);
-                groupDataFile.createNewFile();
-                outStream = new BufferedWriter(new FileWriter(groupDataFile));
-
-                //first line is number of bonus blocks
-                outStream.write(String.valueOf(currentValue));
-                outStream.newLine();
-            }
-
-            //if any problem, log it
-            catch (Exception e)
-            {
-                GriefPrevention.AddLogEntry("Unexpected exception saving data for group \"" + groupName + "\": " + e.getMessage());
-            }
-
-            try
-            {
-                //close the file
-                if (outStream != null)
-                {
-                    outStream.close();
-                }
-            }
-            catch (IOException ignored) {}
+            GriefPrevention.AddLogEntry("Unable to save data for group " + groupName + ".  Details:");
+            GriefPrevention.AddLogEntry(e.getMessage());
         }
     }
 
